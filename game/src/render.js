@@ -1,5 +1,6 @@
-import { TILE, W, H, clamp, lerp, formatTime, formatMoney, conePolygon } from './util.js';
+import { TILE, COLS, ROWS, W, H, clamp, lerp, formatTime, formatMoney, conePolygon } from './util.js';
 import { ROOMS, MAP, EXIT_TILES, VAN, LAMPS, DECOR_CASES } from './map.js';
+import { isMuted } from './sound.js';
 
 const FONT = 'system-ui, -apple-system, sans-serif';
 const MONO = 'ui-monospace, Menlo, monospace';
@@ -232,12 +233,13 @@ function drawCone(ctx, world, ent, fov, range, color, alpha, pulse = 0) {
   const g = ctx.createRadialGradient(ent.x, ent.y, 6, ent.x, ent.y, range);
   const a = alpha + pulse * 0.1;
   g.addColorStop(0, color.replace('A', (a).toFixed(3)));
-  g.addColorStop(0.55, color.replace('A', (a * 0.5).toFixed(3)));
-  g.addColorStop(1, color.replace('A', '0.02'));
+  g.addColorStop(0.5, color.replace('A', (a * 0.45).toFixed(3)));
+  g.addColorStop(0.85, color.replace('A', (a * 0.14).toFixed(3)));
+  g.addColorStop(1, color.replace('A', '0'));
   conePath(ctx, pts);
   ctx.fillStyle = g;
   ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.16)';
   ctx.lineWidth = 1;
   ctx.stroke();
   circle(ctx, ent.x, ent.y, 3, 'rgba(255,255,240,0.85)');
@@ -585,6 +587,88 @@ function drawVan(ctx) {
   txt(ctx, 'GETAWAY Co.', v.x + 6, v.y + 22, { size: 8, weight: 700, color: 'rgba(230,240,255,0.75)', spacing: 1 });
 }
 
+function drawSmoke(ctx, world, t, scale) {
+  for (const s of world.smoke) {
+    const grow = Math.min(1, s.t / 0.35);
+    const out = s.t > s.dur - 0.7 ? Math.max(0, (s.dur - s.t) / 0.7) : 1;
+    const a = grow * out * scale;
+    if (a <= 0.01) continue;
+    const r = s.r * (0.62 + 0.38 * grow);
+    for (let i = 0; i < 3; i++) {
+      const wob = t * 0.7 + i * 2.09;
+      const bx = s.x + Math.cos(wob) * r * 0.2;
+      const by = s.y + Math.sin(wob * 1.3) * r * 0.16;
+      const g = ctx.createRadialGradient(bx, by, r * 0.05, bx, by, r);
+      g.addColorStop(0, `rgba(9,11,17,${(0.5 * a).toFixed(3)})`);
+      g.addColorStop(0.55, `rgba(13,16,24,${(0.34 * a).toFixed(3)})`);
+      g.addColorStop(1, 'rgba(16,20,30,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(bx - r, by - r, r * 2, r * 2);
+    }
+  }
+}
+
+function drawMinimap(ctx, world) {
+  const s = 0.11;
+  const px = W - 136;
+  const py = H - 94;
+  const pw = 128;
+  const ph = 86;
+  panel(ctx, px, py, pw, ph, { r: 8, fill: 'rgba(7,10,18,0.82)', stroke: 'rgba(90,110,160,0.5)', lw: 1.2 });
+  const mx = px + 11;
+  const my = py + 20;
+  ctx.fillStyle = 'rgba(22,28,46,0.9)';
+  ctx.fillRect(mx, my, COLS * TILE * s, ROWS * TILE * s);
+  ctx.fillStyle = 'rgba(125,145,200,0.6)';
+  for (let ty = 0; ty < ROWS; ty++) {
+    for (let tx = 0; tx < COLS; tx++) {
+      if (MAP[ty][tx] === '#') ctx.fillRect(mx + tx * TILE * s, my + ty * TILE * s, TILE * s + 0.6, TILE * s + 0.6);
+    }
+  }
+  ctx.fillStyle = world.doorOpen ? 'rgba(120,255,170,0.95)' : 'rgba(255,110,110,0.6)';
+  ctx.fillRect(mx + 4 * TILE * s, my + 13 * TILE * s, 2 * TILE * s, 3);
+  for (const sm of world.smoke) {
+    circle(ctx, mx + sm.x * s, my + sm.y * s, sm.r * s * Math.min(1, sm.t / 0.35), 'rgba(165,180,210,0.3)');
+  }
+  const marks = [
+    { l: world.loot[0], c: '#ffd873' },
+    { l: world.loot[1], c: '#7cc4ff' },
+    { l: world.loot[2], c: '#ffca5f' },
+  ];
+  for (const m of marks) {
+    const x = mx + m.l.x * s;
+    const y = my + m.l.y * s;
+    ctx.globalAlpha = m.l.got ? 0.25 : 1;
+    if (m.l.kind === 'vault') circle(ctx, x, y, 3, m.c);
+    else if (m.l.kind === 'gem') {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(Math.PI / 4);
+      ctx.fillStyle = m.c;
+      ctx.fillRect(-2.4, -2.4, 4.8, 4.8);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = m.c;
+      ctx.fillRect(x - 2.6, y - 2, 5.2, 4);
+    }
+    ctx.globalAlpha = 1;
+  }
+  for (const g of world.guards) {
+    const x = mx + g.x * s;
+    const y = my + g.y * s;
+    circle(ctx, x, y, 2.4, g.state === 'chase' ? '#ff5c5c' : g.state === 'suspicious' ? '#ffb257' : '#e8ecf8');
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(g.face) * 5, y + Math.sin(g.face) * 5);
+    ctx.stroke();
+  }
+  circle(ctx, mx + world.thief.x * s, my + world.thief.y * s, 2.6, '#5fdcff', 'rgba(255,255,255,0.8)', 1);
+  txt(ctx, `M ${isMuted() ? 'SOUND OFF' : 'SOUND ON'}`, px + 10, py + 13, { size: 7.5, weight: 800, spacing: 1, color: isMuted() ? 'rgba(255,140,140,0.9)' : 'rgba(190,203,235,0.8)' });
+  txt(ctx, 'MAP', px + pw - 10, py + 13, { size: 7.5, weight: 900, align: 'right', spacing: 2, color: 'rgba(190,203,235,0.6)' });
+}
+
 function keycap(ctx, x, y, label, w = 20) {
   panel(ctx, x, y - 13, w, 17, { r: 4, fill: 'rgba(220,230,255,0.10)', stroke: 'rgba(220,230,255,0.35)', lw: 1 });
   txt(ctx, label, x + w / 2, y, { size: 10, weight: 800, align: 'center', color: '#dfe7ff' });
@@ -642,31 +726,32 @@ export function drawHUD(ctx, world) {
   txt(ctx, formatMoney(haul), 148, 44, { size: 19, weight: 900, color: haul > 0 ? '#ffd873' : 'rgba(220,230,255,0.85)', glow: haul > 0 ? 'rgba(255,200,90,0.5)' : null, glowBlur: 8 });
 
   const chips = [
-    { key: 'Q', label: 'JAMMER', n: world.tools.jammer, max: 3, active: world.tools.jamT > 0, actLabel: `JAMMING ${world.tools.jamT.toFixed(1)}s` },
+    { key: 'Q', label: 'JAMMER', n: world.tools.jammer, max: 3, active: world.tools.jamT > 0, actLabel: `JAM ${Math.ceil(world.tools.jamT)}s` },
     { key: 'F', label: 'DECOY', n: world.tools.decoy, max: 2, active: false },
+    { key: 'C', label: 'SMOKE', n: world.tools.smoke, max: 2, active: false },
   ];
   chips.forEach((c, i) => {
-    const x = 236 + i * 128;
+    const x = 320 + i * 98;
     const y = 16;
-    panel(ctx, x, y, 120, 18, { r: 9, fill: c.active ? 'rgba(90,220,255,0.16)' : 'rgba(255,255,255,0.045)', stroke: c.active ? 'rgba(140,230,255,0.8)' : 'rgba(130,150,200,0.4)', lw: 1.2 });
-    txt(ctx, c.key, x + 13, y + 13, { size: 10, weight: 900, align: 'center', color: c.active ? '#8ce4ff' : '#dfe7ff' });
-    txt(ctx, c.active ? c.actLabel : c.label, x + 24, y + 13, { size: 9, weight: 800, spacing: 1, color: c.active ? '#8ce4ff' : 'rgba(210,222,250,0.85)' });
+    panel(ctx, x, y, 92, 18, { r: 9, fill: c.active ? 'rgba(90,220,255,0.16)' : 'rgba(255,255,255,0.045)', stroke: c.active ? 'rgba(140,230,255,0.8)' : 'rgba(130,150,200,0.4)', lw: 1.2 });
+    txt(ctx, c.key, x + 12, y + 13, { size: 10, weight: 900, align: 'center', color: c.active ? '#8ce4ff' : '#dfe7ff' });
+    txt(ctx, c.active ? c.actLabel : c.label, x + 22, y + 13, { size: 9, weight: 800, spacing: 1, color: c.active ? '#8ce4ff' : 'rgba(210,222,250,0.85)' });
     for (let k = 0; k < c.max; k++) {
-      circle(ctx, x + 108 - k * 9, y + 9, 3, k < c.n ? (c.active && i === 0 ? '#8ce4ff' : '#ffd873') : 'rgba(255,255,255,0.14)');
+      circle(ctx, x + 84 - k * 9, y + 9, 3, k < c.n ? (c.active && i === 0 ? '#8ce4ff' : '#ffd873') : 'rgba(255,255,255,0.14)');
     }
   });
 
-  txt(ctx, formatTime(world.stats.time), 480, 42, { size: 21, weight: 800, align: 'center', mono: true, color: '#dfe7ff', spacing: 2 });
+  txt(ctx, formatTime(world.stats.time), 268, 42, { size: 21, weight: 800, align: 'center', mono: true, color: '#dfe7ff', spacing: 2 });
 
   const st = world.status;
-  const sx = 566;
+  const sx = 620;
   const sColor = st === 'ALERT' ? '#ff5c5c' : st === 'SUSPICIOUS' ? '#ffb257' : '#7ce895';
-  panel(ctx, sx, 16, 108, 20, { r: 10, fill: st === 'UNDETECTED' ? 'rgba(80,200,120,0.1)' : st === 'SUSPICIOUS' ? 'rgba(255,170,70,0.12)' : 'rgba(255,80,80,0.16)', stroke: sColor, lw: 1.4 });
-  circle(ctx, sx + 12, 26, 3.5, sColor);
-  txt(ctx, st, sx + 56, 30, { size: 10.5, weight: 900, align: 'center', spacing: 1.5, color: sColor });
+  panel(ctx, sx, 16, 96, 20, { r: 10, fill: st === 'UNDETECTED' ? 'rgba(80,200,120,0.1)' : st === 'SUSPICIOUS' ? 'rgba(255,170,70,0.12)' : 'rgba(255,80,80,0.16)', stroke: sColor, lw: 1.4 });
+  circle(ctx, sx + 10, 26, 3.5, sColor);
+  txt(ctx, st, sx + 52, 30, { size: 10, weight: 900, align: 'center', spacing: 0.5, color: sColor });
 
-  const bx = 696;
-  const bw = 240;
+  const bx = 732;
+  const bw = 204;
   const by = 18;
   const bh = 18;
   txt(ctx, 'ALARM', bx, by - 3, { size: 8.5, weight: 900, spacing: 3, color: 'rgba(200,212,240,0.8)' });
@@ -701,7 +786,7 @@ export function drawHUD(ctx, world) {
   if (ha > 0.01) {
     ctx.save();
     ctx.globalAlpha = ha;
-    panel(ctx, 10, 570, 560, 24, { r: 7, fill: 'rgba(7,10,18,0.72)', stroke: 'rgba(90,110,160,0.4)', lw: 1 });
+    panel(ctx, 10, 570, 800, 24, { r: 7, fill: 'rgba(7,10,18,0.72)', stroke: 'rgba(90,110,160,0.4)', lw: 1 });
     let x = 22;
     const pairs = [
       ['WASD', 'MOVE'],
@@ -709,16 +794,20 @@ export function drawHUD(ctx, world) {
       ['E', 'GRAB'],
       ['Q', 'JAMMER'],
       ['F', 'DECOY'],
-      ['R', 'RESTART'],
+      ['C', 'SMOKE'],
+      ['M', 'MUTE'],
+      ['R', 'RESET'],
     ];
     for (const [k, v] of pairs) {
       const w = Math.max(20, k.length * 11 + 8);
       x += keycap(ctx, x, 587, k, w) + 4;
       txt(ctx, v, x, 587, { size: 9.5, weight: 800, spacing: 1, color: 'rgba(190,203,235,0.85)' });
-      x += ctx.measureText(v).width + 26;
+      x += ctx.measureText(v).width + 18;
     }
     ctx.restore();
   }
+
+  drawMinimap(ctx, world);
 
   if (world.prompt) {
     const p = world.prompt;
@@ -789,6 +878,8 @@ export function render(ctx, world, staticLayer) {
     drawCone(ctx, world, c, c.fov, c.range, 'rgba(120,205,255,A)', 0.34);
   }
 
+  drawSmoke(ctx, world, t, 1);
+
   drawVault(ctx, world.loot[2], t);
   drawLootCase(ctx, world.loot[0], t);
   drawLootCase(ctx, world.loot[1], t);
@@ -828,8 +919,17 @@ export function render(ctx, world, staticLayer) {
   drawThief(ctx, th.x, th.y, th.face, th.bob, th.sneak, t);
   for (const g of world.guards) drawGuard(ctx, g, t);
   for (const c of world.cameras) drawCamera(ctx, c, t);
+  drawSmoke(ctx, world, t, 0.32);
 
   if (world.screen === 'play') {
+    if (world.alarm > 0) {
+      const a = Math.min(0.34, (world.alarm / 100) * 0.34) * (0.75 + 0.25 * Math.sin(t * 6.5));
+      const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.34, W / 2, H / 2, H * 0.78);
+      vg.addColorStop(0, 'rgba(255,40,36,0)');
+      vg.addColorStop(1, `rgba(255,40,36,${a.toFixed(3)})`);
+      ctx.fillStyle = vg;
+      ctx.fillRect(0, 0, W, H);
+    }
     drawHUD(ctx, world);
     const tension = Math.max(world.alarm / 100, world.status === 'ALERT' ? 0.85 : 0);
     if (tension > 0.5) {
@@ -912,7 +1012,7 @@ function drawTitle(ctx, world, t) {
 
   const blink = (t * 1.6) % 1 < 0.65;
   if (blink) txt(ctx, 'PRESS ENTER TO START THE JOB', 480, 566, { size: 17, weight: 900, align: 'center', spacing: 3, color: '#ffe2a0', glow: 'rgba(255,200,90,0.6)', glowBlur: 12 });
-  txt(ctx, 'ENTER start · WASD move · SHIFT sneak · E grab · Q jammer · F decoy · R restart', 480, 592, { size: 11, weight: 600, align: 'center', spacing: 1, color: 'rgba(170,185,220,0.8)' });
+  txt(ctx, 'ENTER start · WASD move · SHIFT sneak · E grab · Q jammer · F decoy · C smoke · M sound · R restart', 480, 592, { size: 11, weight: 600, align: 'center', spacing: 1, color: 'rgba(170,185,220,0.8)' });
 }
 
 function drawWin(ctx, world, t) {

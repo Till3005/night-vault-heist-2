@@ -1,6 +1,7 @@
 import { TILE, W, H, clamp, dist, angleTo, angleLerp, angDiff, makeCaster, hasLineOfSight } from './util.js';
 import { MAP, GUARDS, CAMERAS, LOOT, DECOR_CASES, THIEF_START, solidFor, assertMap } from './map.js';
 import * as input from './input.js';
+import * as sound from './sound.js';
 
 assertMap();
 
@@ -22,12 +23,13 @@ export function createWorld() {
     loot: [],
     noises: [],
     sparkles: [],
+    smoke: [],
     decoy: null,
     alarm: 0,
     alarmPeak: 0,
     seenT: 9,
     doorOpen: false,
-    tools: { jammer: 3, decoy: 2, jamT: 0 },
+    tools: { jammer: 3, decoy: 2, smoke: 2, jamT: 0 },
     prompt: null,
     status: 'UNDETECTED',
     msg: null,
@@ -47,9 +49,11 @@ export function reset(world) {
   world.alarmPeak = 0;
   world.seenT = 9;
   world.doorOpen = false;
-  world.tools = { jammer: 3, decoy: 2, jamT: 0 };
+  world.tools = { jammer: 3, decoy: 2, smoke: 2, jamT: 0 };
   world.noises = [];
   world.sparkles = [];
+  world.smoke = [];
+  sound.stopLoops();
   world.decoy = null;
   world.prompt = null;
   world.status = 'UNDETECTED';
@@ -65,7 +69,9 @@ export function reset(world) {
     sneak: false,
     bob: 0,
     noiseT: 0,
+    footT: 0,
     crackNoiseT: 0,
+    crackTickT: 0,
   };
   world.guards = GUARDS.map((def, gi) => ({
     def,
@@ -133,7 +139,41 @@ function notify(world, text) {
   world.msg = { text, t: 0, dur: 2.8 };
 }
 
+function smokeBlocks(world, ax, ay, bx, by) {
+  for (const s of world.smoke) {
+    let r = s.r * Math.min(1, s.t / 0.35);
+    if (s.t > s.dur - 0.5) r *= (s.dur - s.t) / 0.5;
+    if (r < 8) continue;
+    if (dist(ax, ay, s.x, s.y) < r || dist(bx, by, s.x, s.y) < r) return true;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const fx = ax - s.x;
+    const fy = ay - s.y;
+    const a = dx * dx + dy * dy;
+    const b = 2 * (fx * dx + fy * dy);
+    const c = fx * fx + fy * fy - r * r;
+    if (c <= 0) return true;
+    let disc = b * b - 4 * a * c;
+    if (disc >= 0) {
+      disc = Math.sqrt(disc);
+      const t1 = (-b - disc) / (2 * a);
+      const t2 = (-b + disc) / (2 * a);
+      if ((t1 >= 0 && t1 <= 1) || (t2 >= 0 && t2 <= 1)) return true;
+    }
+  }
+  return false;
+}
+
+function twinkle(world, x, y) {
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2 + 0.26;
+    const sp = 12 + (i % 3) * 9;
+    world.sparkles.push({ x, y, vx: Math.cos(a) * sp, vy: -26 - (i % 4) * 14, t: 0, dur: 1 + (i % 3) * 0.25, color: i % 2 ? '#fff3cf' : '#ffd873', g: 6 });
+  }
+}
+
 function inCone(world, ent, fov, range, tx, ty) {
+  if (smokeBlocks(world, ent.x, ent.y, tx, ty)) return 0;
   const d = dist(ent.x, ent.y, tx, ty);
   if (d > range) return 0;
   const a = angleTo(ent.x, ent.y, tx, ty);
@@ -144,6 +184,7 @@ function inCone(world, ent, fov, range, tx, ty) {
 
 export function update(world, dt) {
   if (world.freeze) return;
+  if (input.pressed('KeyM')) sound.toggleMute();
   world.t += dt;
 
   if (world.screen === 'title') {
@@ -174,11 +215,18 @@ export function update(world, dt) {
     tryMove(world, thief, ax.x * sp * dt, ax.y * sp * dt, THIEF_R, 'thief');
     thief.face = angleLerp(thief.face, Math.atan2(ax.y, ax.x), Math.min(1, dt * 14));
     thief.bob += dt * (thief.sneak ? 7 : 12);
+    thief.footT -= dt;
+    if (thief.footT <= 0) {
+      sound.step(thief.sneak);
+      thief.footT = thief.sneak ? 0.44 : 0.3;
+    }
     thief.noiseT -= dt;
     if (thief.noiseT <= 0) {
       emitNoise(world, thief.x, thief.y, thief.sneak ? 26 : 112);
       thief.noiseT = thief.sneak ? 0.85 : 0.55;
     }
+  } else {
+    thief.footT = 0;
   }
 
   if (input.pressed('KeyQ') && world.tools.jammer > 0 && world.tools.jamT <= 0) {
@@ -198,6 +246,12 @@ export function update(world, dt) {
     tx = clamp(tx, TILE + 14, W - TILE - 14);
     ty = clamp(ty, TILE + 14, 13 * TILE - 14);
     world.decoy = { x: thief.x, y: thief.y, tx, ty, t: 0 };
+  }
+  if (input.pressed('KeyC') && world.tools.smoke > 0) {
+    world.tools.smoke -= 1;
+    world.smoke.push({ x: thief.x, y: thief.y, t: 0, dur: 4, r: 120 });
+    sound.smokePuff();
+    notify(world, 'SMOKE DEPLOYED — SIGHTS BLOCKED');
   }
 
   let anySee = false;
@@ -271,6 +325,7 @@ export function update(world, dt) {
     if (g.state !== 'chase' && g.suspicion >= 1) {
       g.state = 'chase';
       world.stats.chases += 1;
+      sound.sting();
       notify(world, 'SPOTTED — RUN!');
     }
 
@@ -348,11 +403,14 @@ export function update(world, dt) {
       g.seen = { x: thief.x, y: thief.y };
       g.stun = 0.55;
       world.alarm += 8;
+      sound.sting();
       notify(world, 'SPOTTED — RUN!');
     } else if (g.state === 'chase' && gd < CATCH_R) {
       world.screen = 'lockdown';
       world.reason = 'caught';
       world.alarm = Math.max(world.alarm, 88);
+      sound.stopLoops();
+      sound.lose();
       input.clearPressed();
       return;
     }
@@ -369,11 +427,13 @@ export function update(world, dt) {
   }
   for (const n of world.noises) n.t += dt;
   world.noises = world.noises.filter((n) => n.t < 1.4);
+  for (const s of world.smoke) s.t += dt;
+  world.smoke = world.smoke.filter((s) => s.t < s.dur);
   for (const s of world.sparkles) {
     s.t += dt;
     s.x += s.vx * dt;
     s.y += s.vy * dt;
-    s.vy += 60 * dt;
+    s.vy += (s.g ?? 60) * dt;
   }
   world.sparkles = world.sparkles.filter((s) => s.t < s.dur);
 
@@ -390,6 +450,11 @@ export function update(world, dt) {
   if (prompt) {
     if (input.holding()) {
       prompt.prog += dt / prompt.dur;
+      thief.crackTickT -= dt;
+      if (thief.crackTickT <= 0) {
+        sound.crackTick(prompt.prog);
+        thief.crackTickT = 0.21;
+      }
       thief.crackNoiseT -= dt;
       if (thief.crackNoiseT <= 0) {
         emitNoise(world, thief.x, thief.y, prompt.kind === 'vault' ? 130 : 95);
@@ -401,6 +466,7 @@ export function update(world, dt) {
         world.stats.money += prompt.value;
         world.alarm += 5;
         burst(world, prompt.x, prompt.y, '#ffd873');
+        twinkle(world, prompt.x, prompt.y);
         notify(world, `SECURED ${prompt.label} · $${(prompt.value / 1000000).toFixed(2)}M`);
         const left = world.loot.filter((l) => !l.got).length;
         if (left === 0) {
@@ -418,9 +484,13 @@ export function update(world, dt) {
   if (!anySee && world.seenT > 0.9) world.alarm -= dt * 7;
   world.alarm = clamp(world.alarm, 0, 100);
   world.alarmPeak = Math.max(world.alarmPeak, world.alarm);
+  sound.setAlarm(world.alarm / 100, anySee);
+  sound.camHum(world.cameras.reduce((m, c) => Math.max(m, c.see), 0));
   if (world.alarm >= 100) {
     world.screen = 'lockdown';
     world.reason = 'alarm';
+    sound.stopLoops();
+    sound.lose();
     input.clearPressed();
     return;
   }
@@ -432,6 +502,8 @@ export function update(world, dt) {
       world.screen = 'win';
       world.stats.peak = Math.round(world.alarmPeak);
       world.rating = world.alarmPeak < 25 && world.stats.chases === 0 ? 'GHOST' : world.alarmPeak < 70 ? 'PRO' : 'LOUD';
+      sound.stopLoops();
+      sound.win();
       input.clearPressed();
       return;
     }

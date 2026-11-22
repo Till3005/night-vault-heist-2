@@ -2,7 +2,7 @@ const HELD = new Set();
 const PRESSED = [];
 const WATCHED = new Set([
   'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Enter',
-  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyQ', 'KeyF', 'KeyR',
+  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyQ', 'KeyF', 'KeyC', 'KeyM', 'KeyR',
   'ShiftLeft', 'ShiftRight',
 ]);
 

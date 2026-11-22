@@ -9,10 +9,15 @@
 // cones, three sweeping security cameras, a vault plus two display cases to crack (hold E — the
 // noise pings attract guards), a segmented ALARM meter that fills while you are seen and locks
 // the gallery at 100%, and a getaway van below the locked exit door. Tools cost charges: a camera
-// jammer (Q) and a throwable noise decoy (F). SHIFT sneaks (slower, quieter), WASD/arrows move,
-// guards escalate patrol -> suspicious -> chase (red cone) -> caught, and the run ends in a
-// getaway screen with a GHOST/PRO/LOUD rating or a red LOCKDOWN screen. R restarts, Enter
-// confirms. ?shot=cover|alert|title|win stages the four screenshot scenes deterministically.
+// jammer (Q), a throwable noise decoy (F), and a smoke bomb (C, two per run) that drops a four-
+// second cloud blocking guard cones and camera beams inside its radius. SHIFT sneaks (slower,
+// quieter), WASD/arrows move, guards escalate patrol -> suspicious -> chase (red cone) -> caught,
+// and the run ends in a getaway screen with a GHOST/PRO/LOUD rating or a red LOCKDOWN screen.
+// All audio is synthesized WebAudio (no assets): footsteps while moving, crack-progress ticks, a
+// rising alarm tone while spotted, a guard alert sting, a camera hum, and win/lose jingles — M
+// toggles mute, shown in the HUD. A corner minimap tracks walls, guards, loot, smoke and the
+// exit. R restarts, Enter confirms. ?shot=cover|alert|title|win|smoke|chase stages the six
+// screenshot scenes deterministically.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
