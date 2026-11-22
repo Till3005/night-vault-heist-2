@@ -88,12 +88,25 @@ export const GUARDS = [
       { x: 16.4, y: 4.2 },
     ],
   },
+  {
+    name: 'VAULT',
+    speed: { patrol: 48, suspicious: 66, chase: 92 },
+    fov: 1.12,
+    range: 218,
+    wps: [
+      { x: 8.8, y: 1.7 },
+      { x: 13.5, y: 1.7 },
+      { x: 13.5, y: 2.7 },
+      { x: 8.8, y: 2.7 },
+    ],
+  },
 ];
 
 export const CAMERAS = [
   { x: 420, y: 362, base: Math.PI / 2, amp: 0.85, spd: 0.55, phase: 0, range: 195, fov: 0.62 },
   { x: 912, y: 110, base: 2.5, amp: 0.6, spd: 0.42, phase: 2.1, range: 260, fov: 0.56 },
   { x: 326, y: 130, base: 0.42, amp: 0.5, spd: 0.48, phase: 4.2, range: 205, fov: 0.56 },
+  { x: 460, y: 44, base: Math.PI / 2, amp: 0.62, spd: 0.5, phase: 3.1, range: 185, fov: 0.54 },
 ];
 
 export const LOOT = [

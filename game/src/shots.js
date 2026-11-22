@@ -78,6 +78,12 @@ function stageCover(world) {
   g3.target = { x: 380, y: 440 };
   g3.lookT = 0;
 
+  const g4 = world.guards[3];
+  g4.x = 500;
+  g4.y = 100;
+  g4.face = angleTo(500, 100, 460, 168);
+  g4.state = 'patrol';
+
   const cams = world.cameras;
   cams[0].face = 0.66;
   cams[0].see = 0.72;
@@ -85,6 +91,8 @@ function stageCover(world) {
   cams[1].see = 0;
   cams[2].face = 0.5;
   cams[2].see = 0;
+  cams[3].face = Math.PI / 2 + 0.2;
+  cams[3].see = 0;
 
   burstAt(world, 180, 104, '#ffd873', 9);
 }
@@ -133,6 +141,15 @@ function stageAlert(world) {
   g3.seen = { x: th.x, y: th.y };
   g3.loseT = 0.2;
 
+  const g4 = world.guards[3];
+  g4.x = 470;
+  g4.y = 120;
+  g4.face = angleTo(470, 120, 380, 300);
+  g4.state = 'suspicious';
+  g4.suspicion = 0.75;
+  g4.target = { x: 380, y: 300 };
+  g4.lookT = 0;
+
   const cams = world.cameras;
   cams[0].face = 1.9;
   cams[0].see = 0;
@@ -140,6 +157,8 @@ function stageAlert(world) {
   cams[1].see = 0;
   cams[2].face = 0.95;
   cams[2].see = 0;
+  cams[3].face = Math.PI / 2 - 0.2;
+  cams[3].see = 0;
 }
 
 function stageSmoke(world) {
@@ -181,6 +200,12 @@ function stageSmoke(world) {
   g3.face = -1.2;
   g3.state = 'patrol';
 
+  const g4 = world.guards[3];
+  g4.x = 380;
+  g4.y = 80;
+  g4.face = 0.15;
+  g4.state = 'patrol';
+
   const cams = world.cameras;
   cams[0].face = 0.85;
   cams[0].see = 0;
@@ -188,6 +213,8 @@ function stageSmoke(world) {
   cams[1].see = 0;
   cams[2].face = 0.5;
   cams[2].see = 0;
+  cams[3].face = Math.PI / 2 + 0.3;
+  cams[3].see = 0;
 }
 
 function stageChase(world) {
@@ -238,6 +265,15 @@ function stageChase(world) {
   g3.target = { x: 420, y: 470 };
   g3.lookT = 0;
 
+  const g4 = world.guards[3];
+  g4.x = 520;
+  g4.y = 150;
+  g4.face = angleTo(520, 150, 460, 300);
+  g4.state = 'suspicious';
+  g4.suspicion = 0.7;
+  g4.target = { x: 460, y: 300 };
+  g4.lookT = 0;
+
   const cams = world.cameras;
   cams[0].face = 2.3;
   cams[0].see = 0.4;
@@ -245,4 +281,6 @@ function stageChase(world) {
   cams[1].see = 0;
   cams[2].face = 0.6;
   cams[2].see = 0;
+  cams[3].face = Math.PI / 2 - 0.35;
+  cams[3].see = 0;
 }
