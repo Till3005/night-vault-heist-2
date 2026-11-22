@@ -1,5 +1,5 @@
 import { TILE, COLS, ROWS, W, H, clamp, lerp, formatTime, formatMoney, conePolygon } from './util.js';
-import { ROOMS, MAP, EXIT_TILES, VAN, LAMPS, DECOR_CASES } from './map.js';
+import { VAN, getLevel } from './map.js';
 import { isMuted } from './sound.js';
 
 const FONT = 'system-ui, -apple-system, sans-serif';
@@ -61,6 +61,8 @@ function shadowEllipse(ctx, x, y, rx, ry, a = 0.35) {
 }
 
 export function buildStatic(world) {
+  const lv = getLevel(world.level ?? 1);
+  const levelMap = lv.map;
   const cv = document.createElement('canvas');
   cv.width = W;
   cv.height = H;
@@ -116,19 +118,19 @@ export function buildStatic(world) {
     ctx.stroke();
   }
 
-  for (const room of ROOMS) {
+  for (const room of lv.rooms) {
     ctx.fillStyle = room.tint;
     ctx.beginPath();
     ctx.roundRect(room.x + 6, room.y + 6, room.w - 12, room.h - 12, 10);
     ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,0.045)';
     ctx.stroke();
+    if (room.label) {
+      txt(ctx, room.label, room.x + room.w / 2, room.labelY ?? room.y + room.h / 2 + 6, { size: room.labelSize ?? 24, weight: 800, align: 'center', spacing: room.labelSpacing ?? 5, color: room.labelColor ?? 'rgba(220,228,255,0.06)' });
+    }
   }
-  txt(ctx, 'WEST WING', 160, 186, { size: 24, weight: 800, align: 'center', spacing: 5, color: 'rgba(255,240,200,0.08)' });
-  txt(ctx, 'EAST WING', 780, 190, { size: 24, weight: 800, align: 'center', spacing: 5, color: 'rgba(190,220,255,0.08)' });
-  txt(ctx, 'MAIN HALL', 480, 436, { size: 26, weight: 800, align: 'center', spacing: 9, color: 'rgba(220,228,255,0.055)' });
 
-  for (const lamp of LAMPS) {
+  for (const lamp of lv.lamps) {
     const g = ctx.createRadialGradient(lamp.x, lamp.y, 4, lamp.x, lamp.y, lamp.r);
     g.addColorStop(0, 'rgba(255,216,150,0.14)');
     g.addColorStop(0.5, 'rgba(255,208,140,0.055)');
@@ -141,13 +143,13 @@ export function buildStatic(world) {
   ctx.fillStyle = 'rgba(0,0,0,0.4)';
   for (let ty = 0; ty < 15; ty++) {
     for (let tx = 0; tx < 24; tx++) {
-      if (MAP[ty][tx] === '#') ctx.fillRect(tx * TILE + 7, ty * TILE + 9, TILE, TILE);
+      if (levelMap[ty][tx] === '#') ctx.fillRect(tx * TILE + 7, ty * TILE + 9, TILE, TILE);
     }
   }
 
   for (let ty = 0; ty < 15; ty++) {
     for (let tx = 0; tx < 24; tx++) {
-      const ch = MAP[ty][tx];
+      const ch = levelMap[ty][tx];
       if (ch !== '#') continue;
       const x = tx * TILE;
       const y = ty * TILE;
@@ -155,24 +157,24 @@ export function buildStatic(world) {
       ctx.fillRect(x, y, TILE, TILE);
       ctx.fillStyle = 'rgba(255,255,255,0.03)';
       ctx.fillRect(x + 2, y + 2, TILE - 4, TILE - 4);
-      const below = ty + 1 < 15 ? MAP[ty + 1][tx] : '#';
+      const below = ty + 1 < 15 ? levelMap[ty + 1][tx] : '#';
       if (below !== '#') {
         ctx.fillStyle = '#232c50';
         ctx.fillRect(x, y + TILE - 10, TILE, 10);
         ctx.fillStyle = 'rgba(165,185,235,0.4)';
         ctx.fillRect(x, y + TILE - 10, TILE, 1.5);
       }
-      const above = ty > 0 ? MAP[ty - 1][tx] : '#';
+      const above = ty > 0 ? levelMap[ty - 1][tx] : '#';
       if (above !== '#') {
         ctx.fillStyle = 'rgba(175,195,245,0.4)';
         ctx.fillRect(x, y, TILE, 2.5);
       }
-      const right = tx + 1 < 24 ? MAP[ty][tx + 1] : '#';
+      const right = tx + 1 < 24 ? levelMap[ty][tx + 1] : '#';
       if (right !== '#') {
         ctx.fillStyle = 'rgba(150,170,220,0.2)';
         ctx.fillRect(x + TILE - 2, y, 2, TILE);
       }
-      const left = tx > 0 ? MAP[ty][tx - 1] : '#';
+      const left = tx > 0 ? levelMap[ty][tx - 1] : '#';
       if (left !== '#') {
         ctx.fillStyle = 'rgba(10,13,25,0.5)';
         ctx.fillRect(x, y, 2, TILE);
@@ -180,7 +182,7 @@ export function buildStatic(world) {
     }
   }
 
-  for (const c of DECOR_CASES) drawCaseBase(ctx, c, true);
+  for (const c of lv.cases) drawCaseBase(ctx, c, true);
 
   const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.42, W / 2, H / 2, H * 0.86);
   vg.addColorStop(0, 'rgba(0,0,0,0)');
@@ -294,7 +296,7 @@ function drawThief(ctx, x, y, face, bob, sneak, t) {
   }
 }
 
-function drawGuard(ctx, g, t) {
+function drawGuard(ctx, g, t, frozen = false) {
   const r = 12;
   shadowEllipse(ctx, g.x, g.y + 8, r, 4.5);
   ctx.save();
@@ -330,9 +332,16 @@ function drawGuard(ctx, g, t) {
     ctx.beginPath();
     ctx.arc(g.x, g.y, r + 5, t * 3 % (Math.PI * 2), (t * 3) % (Math.PI * 2) + 2.2);
     ctx.stroke();
+    const st = frozen ? 9 : g.stateT ?? 9;
+    const pop = Math.min(1, st * 7);
+    const scale = 0.45 + 0.55 * (1 - Math.pow(1 - pop, 3));
     const by = g.y - 24 - Math.sin(t * 4) * 2;
-    panel(ctx, g.x - 9, by - 11, 18, 18, { r: 6, fill: amber ? 'rgba(40,26,8,0.92)' : 'rgba(48,8,8,0.92)', stroke: `rgba(${col},0.9)`, lw: 1.5 });
-    txt(ctx, amber ? '?' : '!', g.x, by + 3, { size: 13, weight: 900, align: 'center', color: amber ? '#ffb257' : '#ff5c5c' });
+    ctx.save();
+    ctx.translate(g.x, by);
+    ctx.scale(scale, scale);
+    panel(ctx, -9, -11, 18, 18, { r: 6, fill: amber ? 'rgba(40,26,8,0.92)' : 'rgba(48,8,8,0.92)', stroke: `rgba(${col},0.9)`, lw: 1.5 });
+    txt(ctx, amber ? '?' : '!', 0, 3, { size: 13, weight: 900, align: 'center', color: amber ? '#ffb257' : '#ff5c5c' });
+    ctx.restore();
   }
 }
 
@@ -373,6 +382,10 @@ function drawCamera(ctx, c, t) {
     }
   }
   ctx.restore();
+  if (!c.jammed && c.see > 0.55) {
+    const a = (0.45 + 0.55 * c.see) * (0.7 + 0.3 * Math.sin(t * 10));
+    txt(ctx, '!', c.x, c.y - 20, { size: 15, weight: 900, align: 'center', color: `rgba(255,92,92,${a.toFixed(3)})`, glow: 'rgba(255,60,50,0.8)', glowBlur: 8 });
+  }
   if (c.jammed) txt(ctx, 'JAMMED', c.x, c.y - 14, { size: 10, weight: 800, align: 'center', color: '#8ce4ff' });
 }
 
@@ -412,7 +425,7 @@ function drawVault(ctx, v, t) {
     ctx.beginPath();
     ctx.arc(x, y, 26 + pulse * 3, 0, Math.PI * 2);
     ctx.stroke();
-    txt(ctx, 'VAULT · $3.2M', x, y + 52, { size: 11, weight: 800, align: 'center', spacing: 2, color: 'rgba(255,214,120,0.8)' });
+    txt(ctx, `VAULT · $${(v.value / 1000000).toFixed(1)}M`, x, y + 52, { size: 11, weight: 800, align: 'center', spacing: 2, color: 'rgba(255,214,120,0.8)' });
   } else {
     circle(ctx, x, y, 26, '#141826', '#5a6284', 2);
     ctx.save();
@@ -622,7 +635,7 @@ function drawMinimap(ctx, world) {
   ctx.fillStyle = 'rgba(125,145,200,0.6)';
   for (let ty = 0; ty < ROWS; ty++) {
     for (let tx = 0; tx < COLS; tx++) {
-      if (MAP[ty][tx] === '#') ctx.fillRect(mx + tx * TILE * s, my + ty * TILE * s, TILE * s + 0.6, TILE * s + 0.6);
+      if (world.tiles[ty][tx] === '#') ctx.fillRect(mx + tx * TILE * s, my + ty * TILE * s, TILE * s + 0.6, TILE * s + 0.6);
     }
   }
   ctx.fillStyle = world.doorOpen ? 'rgba(120,255,170,0.95)' : 'rgba(255,110,110,0.6)';
@@ -666,7 +679,7 @@ function drawMinimap(ctx, world) {
   }
   circle(ctx, mx + world.thief.x * s, my + world.thief.y * s, 2.6, '#5fdcff', 'rgba(255,255,255,0.8)', 1);
   txt(ctx, `M ${isMuted() ? 'SOUND OFF' : 'SOUND ON'}`, px + 10, py + 13, { size: 7.5, weight: 800, spacing: 1, color: isMuted() ? 'rgba(255,140,140,0.9)' : 'rgba(190,203,235,0.8)' });
-  txt(ctx, 'MAP', px + pw - 10, py + 13, { size: 7.5, weight: 900, align: 'right', spacing: 2, color: 'rgba(190,203,235,0.6)' });
+  txt(ctx, `MAP · F${world.level ?? 1}`, px + pw - 10, py + 13, { size: 7.5, weight: 900, align: 'right', spacing: 2, color: 'rgba(190,203,235,0.6)' });
 }
 
 function keycap(ctx, x, y, label, w = 20) {
@@ -849,7 +862,7 @@ function input_held(world) {
   return world.prompt && world.prompt.prog > 0 && world.prompt.prog < 1;
 }
 
-export function render(ctx, world, staticLayer) {
+function renderScene(ctx, world, staticLayer) {
   ctx.drawImage(staticLayer, 0, 0);
   const t = world.t;
 
@@ -917,7 +930,7 @@ export function render(ctx, world, staticLayer) {
 
   const th = world.thief;
   drawThief(ctx, th.x, th.y, th.face, th.bob, th.sneak, t);
-  for (const g of world.guards) drawGuard(ctx, g, t);
+  for (const g of world.guards) drawGuard(ctx, g, t, world.freeze);
   for (const c of world.cameras) drawCamera(ctx, c, t);
   drawSmoke(ctx, world, t, 0.32);
 
@@ -949,6 +962,23 @@ export function render(ctx, world, staticLayer) {
 
   if (world.screen === 'win') drawWin(ctx, world, t);
   if (world.screen === 'lockdown') drawLockdown(ctx, world, t);
+  if (world.screen === 'levelwin') drawLevelWin(ctx, world, t);
+}
+
+export function render(ctx, world, staticLayer) {
+  const t = world.t;
+  const sh = world.freeze ? 0 : world.shake ?? 0;
+  const fl = world.freeze ? 0 : world.flash ?? 0;
+  ctx.fillStyle = '#05070d';
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(Math.sin(t * 93.7) * sh, Math.cos(t * 81.3) * sh * 0.7);
+  renderScene(ctx, world, staticLayer);
+  ctx.restore();
+  if (fl > 0) {
+    ctx.fillStyle = `rgba(255,44,36,${(fl * 0.6).toFixed(3)})`;
+    ctx.fillRect(0, 0, W, H);
+  }
 }
 
 function drawTitle(ctx, world, t) {
@@ -1011,6 +1041,9 @@ function drawTitle(ctx, world, t) {
   circle(ctx, 560, cy, 3, 'rgba(255,255,240,0.85)');
 
   const blink = (t * 1.6) % 1 < 0.65;
+  if (world.best > 0) {
+    txt(ctx, `BEST HAUL  ${formatMoney(world.best)}`, 480, 544, { size: 12.5, weight: 900, align: 'center', spacing: 3, color: '#ffd257', glow: 'rgba(255,200,90,0.35)', glowBlur: 8 });
+  }
   if (blink) txt(ctx, 'PRESS ENTER TO START THE JOB', 480, 566, { size: 17, weight: 900, align: 'center', spacing: 3, color: '#ffe2a0', glow: 'rgba(255,200,90,0.6)', glowBlur: 12 });
   txt(ctx, 'ENTER start · WASD move · SHIFT sneak · E grab · Q jammer · F decoy · C smoke · M sound · R restart', 480, 592, { size: 11, weight: 600, align: 'center', spacing: 1, color: 'rgba(170,185,220,0.8)' });
 }
@@ -1066,6 +1099,61 @@ function drawWin(ctx, world, t) {
   const blink = (t * 1.6) % 1 < 0.65;
   if (blink) txt(ctx, 'ENTER — TITLE     R — ONE MORE JOB', 480, 430, { size: 15, weight: 900, align: 'center', spacing: 2, color: '#ffe2a0' });
   txt(ctx, 'The van clears the bridge at 3:04 AM. Nobody looks back.', 480, 466, { size: 12.5, weight: 500, align: 'center', color: '#8fa0c8' });
+}
+
+function drawLevelWin(ctx, world, t) {
+  ctx.fillStyle = 'rgba(6,10,18,0.88)';
+  ctx.fillRect(0, 0, W, H);
+  const glow = ctx.createRadialGradient(480, 210, 20, 480, 210, 430);
+  glow.addColorStop(0, 'rgba(255,210,90,0.13)');
+  glow.addColorStop(1, 'rgba(255,210,90,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+
+  txt(ctx, `FLOOR ${world.level ?? 1} CLEARED`, 480, 128, { size: 20, weight: 800, align: 'center', spacing: 8, color: '#9fb2dd' });
+  const gg = ctx.createLinearGradient(0, 148, 0, 258);
+  gg.addColorStop(0, '#fff3c4');
+  gg.addColorStop(0.5, '#ffd257');
+  gg.addColorStop(1, '#c98f1e');
+  ctx.save();
+  ctx.font = '900 58px system-ui';
+  ctx.shadowColor = 'rgba(255,200,80,0.5)';
+  ctx.shadowBlur = 24;
+  ctx.fillStyle = gg;
+  ctx.letterSpacing = '8px';
+  ctx.textAlign = 'center';
+  ctx.fillText('LEVEL 1 COMPLETE', 484, 236);
+  ctx.restore();
+  ctx.fillStyle = 'rgba(255,210,90,0.6)';
+  ctx.fillRect(300, 254, 360, 2.5);
+
+  panel(ctx, 300, 284, 360, 118, { r: 12, fill: 'rgba(10,14,26,0.9)', stroke: 'rgba(110,135,190,0.55)', lw: 1.5 });
+  const rows = [
+    ['TIME ON SITE', formatTime(world.stats.time)],
+    ['HAUL SECURED', formatMoney(world.stats.money)],
+    ['PEAK ALARM', `${world.stats.peak}%`],
+    ['TIMES SPOTTED', String(world.stats.chases)],
+  ];
+  rows.forEach((r, i) => {
+    const y = 310 + i * 23;
+    txt(ctx, r[0], 322, y, { size: 12, weight: 700, spacing: 2, color: '#9fb2dd' });
+    txt(ctx, r[1], 638, y, { size: 13.5, weight: 900, align: 'right', mono: true, color: '#eef2ff' });
+  });
+
+  const rc = world.rating === 'GHOST' ? ['#6ee7ff', 'they never knew you were there'] : world.rating === 'PRO' ? ['#ffc95e', 'smooth work — a few close calls'] : ['#ff6b6b', 'subtle as a brick, but rich'];
+  ctx.save();
+  ctx.translate(740, 100);
+  ctx.rotate(-0.16);
+  panel(ctx, -86, -34, 172, 68, { r: 10, fill: 'rgba(10,14,26,0.85)', stroke: rc[0], lw: 3 });
+  panel(ctx, -78, -26, 156, 52, { r: 7, stroke: rc[0], lw: 1.5, fill: 'rgba(10,14,26,0.4)' });
+  txt(ctx, 'RATING', 0, -12, { size: 9, weight: 900, align: 'center', spacing: 4, color: '#9fb2dd' });
+  txt(ctx, world.rating, 0, 20, { size: 30, weight: 900, align: 'center', spacing: 4, color: rc[0], glow: rc[0], glowBlur: 16 });
+  ctx.restore();
+
+  txt(ctx, 'THE LOWER VAULTS AWAIT — MORE GUARDS, MORE CAMERAS.', 480, 428, { size: 12.5, weight: 700, align: 'center', spacing: 1, color: '#ffb257' });
+  const blink = (t * 1.6) % 1 < 0.65;
+  if (blink) txt(ctx, 'ENTER — DESCEND TO FLOOR 2', 480, 462, { size: 16, weight: 900, align: 'center', spacing: 3, color: '#ffe2a0', glow: 'rgba(255,200,90,0.5)', glowBlur: 10 });
+  txt(ctx, 'R — REDO THIS FLOOR', 480, 492, { size: 12, weight: 700, align: 'center', spacing: 2, color: '#8fa0c8' });
 }
 
 function drawLockdown(ctx, world, t) {

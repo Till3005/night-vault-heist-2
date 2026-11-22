@@ -1,5 +1,5 @@
-import { TILE, W, H, clamp, dist, angleTo, angleLerp, angDiff, makeCaster, hasLineOfSight } from './util.js';
-import { MAP, GUARDS, CAMERAS, LOOT, DECOR_CASES, THIEF_START, solidFor, assertMap } from './map.js';
+import { TILE, W, H, clamp, dist, angleTo, angleLerp, angDiff, makeCaster, hasLineOfSight, loadBest, saveBest } from './util.js';
+import { getLevel, solidFor, assertMap } from './map.js';
 import * as input from './input.js';
 import * as sound from './sound.js';
 
@@ -12,8 +12,13 @@ const CATCH_R = 27;
 
 export function createWorld() {
   const world = {
-    tiles: MAP,
-    cast: makeCaster(MAP),
+    tiles: null,
+    cast: null,
+    level: 1,
+    best: loadBest(),
+    shake: 0,
+    flash: 0,
+    staticDirty: false,
     screen: 'title',
     t: 3.7,
     freeze: false,
@@ -41,15 +46,22 @@ export function createWorld() {
   return world;
 }
 
-export function reset(world) {
+export function reset(world, level) {
+  const lv = getLevel(level ?? world.level ?? 1);
+  if (world.level !== (level ?? world.level ?? 1)) world.staticDirty = true;
+  world.level = level ?? world.level ?? 1;
+  world.tiles = lv.map;
+  world.cast = makeCaster(lv.map);
   world.t = 0;
   world.freeze = false;
   world.screen = 'title';
   world.alarm = 0;
   world.alarmPeak = 0;
+  world.shake = 0;
+  world.flash = 0;
   world.seenT = 9;
   world.doorOpen = false;
-  world.tools = { jammer: 3, decoy: 2, smoke: 2, jamT: 0 };
+  world.tools = world.level >= 2 ? { jammer: 2, decoy: 1, smoke: 2, jamT: 0 } : { jammer: 3, decoy: 2, smoke: 2, jamT: 0 };
   world.noises = [];
   world.sparkles = [];
   world.smoke = [];
@@ -62,8 +74,8 @@ export function reset(world) {
   world.rating = '';
   world.stats = { time: 0, chases: 0, money: 0, peak: 0 };
   world.thief = {
-    x: THIEF_START.x,
-    y: THIEF_START.y,
+    x: lv.start.x,
+    y: lv.start.y,
     face: -Math.PI / 2,
     moving: false,
     sneak: false,
@@ -73,7 +85,7 @@ export function reset(world) {
     crackNoiseT: 0,
     crackTickT: 0,
   };
-  world.guards = GUARDS.map((def, gi) => ({
+  world.guards = lv.guards.map((def, gi) => ({
     def,
     x: def.wps[0].x * TILE,
     y: def.wps[0].y * TILE,
@@ -81,6 +93,8 @@ export function reset(world) {
     wi: 1,
     dir: 1,
     state: 'patrol',
+    stateT: 0,
+    pstate: 'patrol',
     suspicion: 0,
     wait: 0,
     lookBase: 0,
@@ -91,12 +105,12 @@ export function reset(world) {
     stun: 0,
     phase: gi * 1.7,
   }));
-  world.cameras = CAMERAS.map((c) => ({ ...c, face: c.base + c.amp * Math.sin(c.phase), see: 0, alertCd: 0 }));
-  world.loot = LOOT.map((l) => ({ ...l, got: false, prog: 0 }));
+  world.cameras = lv.cameras.map((c) => ({ ...c, face: c.base + c.amp * Math.sin(c.phase), see: 0, alertCd: 0 }));
+  world.loot = lv.loot.map((l) => ({ ...l, got: false, prog: 0 }));
   world.obstacles = [
-    ...LOOT.filter((l) => l.kind !== 'vault').map((l) => ({ x: l.x, y: l.y, r: 18 })),
-    { x: LOOT[2].x, y: LOOT[2].y, r: 31 },
-    ...DECOR_CASES.map((c) => ({ x: c.x, y: c.y, r: 17 })),
+    ...lv.loot.filter((l) => l.kind !== 'vault').map((l) => ({ x: l.x, y: l.y, r: 18 })),
+    { x: lv.loot[2].x, y: lv.loot[2].y, r: 31 },
+    ...lv.cases.map((c) => ({ x: c.x, y: c.y, r: 17 })),
   ];
 }
 
@@ -184,21 +198,38 @@ function inCone(world, ent, fov, range, tx, ty) {
 
 export function update(world, dt) {
   if (world.freeze) return;
+  if (world.shake > 0) world.shake = Math.max(0, world.shake - dt * 30);
+  if (world.flash > 0) world.flash = Math.max(0, world.flash - dt * 1.6);
   if (input.pressed('KeyM')) sound.toggleMute();
   world.t += dt;
 
   if (world.screen === 'title') {
     if (input.pressed('Enter')) {
-      reset(world);
+      reset(world, 1);
+      world.screen = 'play';
+    }
+    input.clearPressed();
+    return;
+  }
+  if (world.screen === 'levelwin') {
+    if (input.pressed('Enter')) {
+      reset(world, 2);
+      world.screen = 'play';
+    }
+    if (input.pressed('KeyR')) {
+      reset(world, 1);
       world.screen = 'play';
     }
     input.clearPressed();
     return;
   }
   if (world.screen === 'win' || world.screen === 'lockdown') {
-    if (input.pressed('Enter')) world.screen = 'title';
+    if (input.pressed('Enter')) {
+      reset(world, 1);
+      world.screen = 'title';
+    }
     if (input.pressed('KeyR')) {
-      reset(world);
+      reset(world, world.level);
       world.screen = 'play';
     }
     input.clearPressed();
@@ -295,6 +326,11 @@ export function update(world, dt) {
   }
 
   for (const g of world.guards) {
+    if (g.pstate !== g.state) {
+      g.pstate = g.state;
+      g.stateT = 0;
+    }
+    g.stateT += dt;
     if (g.stun > 0) {
       g.stun -= dt;
       anyChase = g.state === 'chase';
@@ -325,6 +361,8 @@ export function update(world, dt) {
     if (g.state !== 'chase' && g.suspicion >= 1) {
       g.state = 'chase';
       world.stats.chases += 1;
+      world.shake = 9;
+      world.flash = 0.5;
       sound.sting();
       notify(world, 'SPOTTED — RUN!');
     }
@@ -403,12 +441,16 @@ export function update(world, dt) {
       g.seen = { x: thief.x, y: thief.y };
       g.stun = 0.55;
       world.alarm += 8;
+      world.shake = 9;
+      world.flash = 0.5;
       sound.sting();
       notify(world, 'SPOTTED — RUN!');
     } else if (g.state === 'chase' && gd < CATCH_R) {
       world.screen = 'lockdown';
       world.reason = 'caught';
       world.alarm = Math.max(world.alarm, 88);
+      world.shake = 13;
+      world.flash = 0.85;
       sound.stopLoops();
       sound.lose();
       input.clearPressed();
@@ -489,6 +531,8 @@ export function update(world, dt) {
   if (world.alarm >= 100) {
     world.screen = 'lockdown';
     world.reason = 'alarm';
+    world.shake = 13;
+    world.flash = 0.85;
     sound.stopLoops();
     sound.lose();
     input.clearPressed();
@@ -499,9 +543,13 @@ export function update(world, dt) {
 
   if (thief.y > 13 * TILE + 22) {
     if (world.loot.every((l) => l.got)) {
-      world.screen = 'win';
       world.stats.peak = Math.round(world.alarmPeak);
       world.rating = world.alarmPeak < 25 && world.stats.chases === 0 ? 'GHOST' : world.alarmPeak < 70 ? 'PRO' : 'LOUD';
+      if (world.stats.money > (world.best ?? 0)) {
+        world.best = world.stats.money;
+        saveBest(world.best);
+      }
+      world.screen = world.level >= 2 ? 'win' : 'levelwin';
       sound.stopLoops();
       sound.win();
       input.clearPressed();
@@ -510,7 +558,7 @@ export function update(world, dt) {
   }
 
   if (input.pressed('KeyR')) {
-    reset(world);
+    reset(world, world.level);
     world.screen = 'play';
   }
   input.clearPressed();

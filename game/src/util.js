@@ -33,6 +33,22 @@ export function formatMoney(v) {
   return `$${Math.round(v / 1000)}K`;
 }
 
+const BEST_KEY = 'heist_best_loot';
+
+export function loadBest() {
+  try {
+    return Number(localStorage.getItem(BEST_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function saveBest(v) {
+  try {
+    localStorage.setItem(BEST_KEY, String(Math.round(v)));
+  } catch {}
+}
+
 export function makeCaster(tiles) {
   return function cast(x, y, angle, maxDist) {
     const sin = Math.sin(angle);
